@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v7.4-lab';
+const SCRIPT_VER = 'v7.5-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -272,7 +272,7 @@ export default async function (ctx) {
           break;
         }
       }
-      bag.items = shuffleArr(cfg.dedupeVariant ? dedupeVariants(acc) : acc).slice(0, cfg.bagSize);
+      bag.items = shuffleArr(dedupeVariants(acc, cfg.variantDedupe, cfg.artistDedupe)).slice(0, cfg.bagSize);
       writeJSON(ctx, K.bag, bag);
       if (!bag.items.length) break;
     }
@@ -501,7 +501,8 @@ function readConfig(env, family) {
     repeatPct: int('REPEAT_PCT', 10, 0, 80),   // 允许多少比例的「回放」（重复率上限）
     bagSize: int('BAG_SIZE', 50, 10, 100),     // 每袋多少张（一次清单最多 100）
     monthSlice: bool('MONTH_SLICE', true),     // 按月切块：每次装袋挑一个自然月
-    dedupeVariant: bool('DEDUPE_VARIANT', true),  // 同画师/变体去重：一袋里每个画师最多 1 张，跳过父子变体与同 pixiv 作品
+    artistDedupe: bool('ARTIST_DEDUPE', true),    // 一袋里每个画师最多 1 张
+    variantDedupe: bool('VARIANT_DEDUPE', true),  // 跳过父子变体图 + 同一 pixiv 作品的多张
     debug: bool('DEBUG', false),
     timeoutMs: 20000
   };
@@ -853,21 +854,25 @@ function monthRange(key) {
 
 // 同一个画师常一次上传一整套（草稿/差分/裁切），md5 不同但看起来一样。
 // 这里按「同 pixiv 作品 / 父子变体 / 同画师」三道筛，一袋里每个画师最多留 1 张。
-function dedupeVariants(list) {
+function dedupeVariants(list, doVariant, doArtist) {
   const srcSeen = {};
   const artistSeen = {};
   const out = [];
   for (let i = 0; i < list.length; i++) {
     const it = list[i];
-    if (it.parent) continue;                      // 子图（变体）直接跳过
-    if (it.srcKey) {
-      if (srcSeen[it.srcKey]) continue;           // 同一 pixiv 作品只留一张
-      srcSeen[it.srcKey] = 1;
+    if (doVariant) {
+      if (it.parent) continue;                    // 子图（同一张画的变体）直接跳过
+      if (it.srcKey) {
+        if (srcSeen[it.srcKey]) continue;         // 同一 pixiv 作品只留一张
+        srcSeen[it.srcKey] = 1;
+      }
     }
-    const who = String(it.creator || '');
-    if (who) {
-      if (artistSeen[who]) continue;               // 一袋里每个画师最多 1 张
-      artistSeen[who] = 1;
+    if (doArtist) {
+      const who = String(it.creator || '');
+      if (who) {
+        if (artistSeen[who]) continue;             // 一袋里每个画师最多 1 张
+        artistSeen[who] = 1;
+      }
     }
     out.push(it);
   }
