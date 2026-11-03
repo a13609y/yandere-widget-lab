@@ -26,6 +26,12 @@ env_schema:
     options: ["true", "false"]
     default_value: "true"
 
+  DEDUPE_VARIANT:
+    name: 洗牌 · 同画师/变体去重
+    description: "开 = 一袋里每个画师最多 1 张，并跳过同一 pixiv 作品的多张与父子变体图（草稿/差分/裁切）。画师批量上传时观感会好很多"
+    options: ["true", "false"]
+    default_value: "true"
+
   REPEAT_PCT:
     name: 洗牌 · 允许重复比例
     description: "每次刷新有多大概率「回放」一张最久没出现过的旧图。0 = 永不重复（素材见底后可能取不到图），10 = 十次里大约一次旧图，均匀撒开不会连着撞同一张"
