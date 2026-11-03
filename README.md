@@ -21,7 +21,7 @@ https://raw.githubusercontent.com/a13609y/yandere-widget-lab/main/lab.yaml
 另外三件事：
 
 - **按月切块**：每次装袋随机挑一个自然月（如 2024-03），只在这个月里取图 —— 时间分布均匀，不会老是最近那批；「最新」排序自动忽略此项。
-- **两源轮换**：图源=自动时 Konachan / yande.re 交替（以前是 Konachan 用完才用 yande）。
+- **图源**：回到「Konachan 优先，返回 0 条才用 yande.re」——两站图重合度太高，轮换没意义（v7.9 改回）。
 - **md5 去重**：两站同一张画 md5 相同，去重键从 post id 换成 md5，跨站重复也能挡住。
 
 ## 洗牌参数已内置（按排序自动套用）
