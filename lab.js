@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v7.9-lab';
+const SCRIPT_VER = 'v7.10-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -145,7 +145,7 @@ const EXCLUDE_PRESETS = [
   { key: 'EX_NIPPLE', tags: ['nipple', 'nipples'] },          // 露点（单复数都排）
   { key: 'EX_PANEL', tags: ['4koma'], on: true },             // 多格漫画（仅 yande.re 有效），默认开
   // 「白色」只按整词匹配：konachan 上 white_hair 有上万条，按段匹配会把白毛角色全灭
-  { key: 'EX_WHITE', tags: ['white'], exact: true, on: true } // 默认开：白底/纯白画面在桌面组件上很脏
+  { key: 'EX_WHITE', tags: ['white', 'transparent_background', 'transparent'], exact: true, on: true }   // 白底/透明底在桌面组件上都很难看，默认开
   // 其余排除项（胖次/内衣/透视/裸体/骆驼趾/萝莉/捆绑）已删除：
   // 两站标签命中率低、又容易把 q 级素材筛空；需要时用「过滤 · 自定义标签」临时补
 ];
