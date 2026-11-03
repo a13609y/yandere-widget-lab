@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v7.8-lab';
+const SCRIPT_VER = 'v7.9-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -242,22 +242,14 @@ export default async function (ctx) {
             c = Object.assign({}, cfg, { dateFilter: 'date:' + rg.from + '..' + rg.to, monthLock: true, monthLabel: mk });
             bag.lastMonth = mk;
           }
-          // 「自动」= 两个源轮着用；指定源就固定用那个
-          const hostOrder = cfg.site === 'auto'
-            ? (bag.srcTurn ? ['yande', konachanHostFor(cfg)] : [konachanHostFor(cfg), 'yande'])
-            : null;
-          if (hostOrder && hostOrder[0] === 'yande' && cfg.sort === 'random' && c.dateFilter) {
-            c = Object.assign({}, c, { forceOrderDate: true });
-          }
-
-          const res = await search(ctx, c, page, pool.plan, badSet, historySet, hostOrder);
+          // 回到「Konachan 优先，空了才用 yande」；不再两源轮换（两站图基本重合，轮换没好处）
+          const res = await search(ctx, c, page, pool.plan, badSet, historySet);
           pages++;
           searches++;
           if (cfg.sort !== 'random') pool.page = page >= 10 ? 1 : page + 1;
           if (res.ok) pool.plan = res.plan || null;
           pool.sig = sig;
           writeJSON(ctx, poolKey, pool);
-          if (cfg.site === 'auto') { bag.srcTurn = bag.srcTurn ? 0 : 1; }
 
           const got = (res.fresh && res.fresh.length) ? res.fresh : (res.items || []);
           const unseen = got.filter(it => !historySet.has(String(it.uid)) && !badSet.has(String(it.uid)));
@@ -702,9 +694,11 @@ async function search(ctx, cfg, page, plan, skipSet, historySet, hostOrder) {
       if (budget <= 0) return { items: [] };
       budget--;
       const host = hostList[i];
-      const url = HOSTS[host] + '?tags=' + encodeURIComponent(buildTagString(c, useTags)) + '&limit=100&page=' + pg;
+      // 轮到 yande 且带时段时，它的 order:random 只回 0~3 条 → 换成 order:date
+      const cc = (host === 'yande' && c.sort === 'random' && c.dateFilter) ? Object.assign({}, c, { forceOrderDate: true }) : c;
+      const url = HOSTS[host] + '?tags=' + encodeURIComponent(buildTagString(cc, useTags)) + '&limit=100&page=' + pg;
       try {
-        const items = normalize(await fetchJson(ctx, url, c), host, sent)
+        const items = normalize(await fetchJson(ctx, url, cc), host, sent)
           .filter(it => passesFilter(it, c) && !(skipSet && skipSet.has(String(it.id))));   // 下不下来的图直接当不存在，好让放宽链继续往下走
         okHosts.push(host);
         if (!items.length) continue;
