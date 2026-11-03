@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v7.6-lab';
+const SCRIPT_VER = 'v7.8-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -235,7 +235,7 @@ export default async function (ctx) {
 
           // 时段切块：从「月份袋」里抽一个自然月，只在这个月里取图
           let c = cfg;
-          if (cfg.monthSlice && cfg.periodDays > 0 && cfg.sort !== 'date') {
+          if (cfg.monthSlice && cfg.periodDays > 0 && cfg.sort !== 'date' && !bag.noMonth) {
             if (!Array.isArray(bag.months) || !bag.months.length) bag.months = shuffleArr(monthKeys(cfg.periodDays));
             const mk = bag.months.shift();
             const rg = monthRange(mk);
@@ -262,7 +262,7 @@ export default async function (ctx) {
           const got = (res.fresh && res.fresh.length) ? res.fresh : (res.items || []);
           const unseen = got.filter(it => !historySet.has(String(it.uid)) && !badSet.has(String(it.uid)));
           const add = unseen.length ? unseen : got.filter(it => !badSet.has(String(it.uid))).slice(0, 3);
-          if (!add.length) break;
+          if (!add.length) continue;      // 这页/这个月没货 → 换下一页（最多 3 页），别直接放弃
           // 跨页也去重（同一张图两页都可能出现）
           const have = new Set(acc.map(it => String(it.uid)));
           add.forEach(it => { if (!have.has(String(it.uid))) { have.add(String(it.uid)); acc.push(it); } });
@@ -272,7 +272,15 @@ export default async function (ctx) {
           break;
         }
       }
+      if (!acc.length && cfg.monthSlice && cfg.periodDays > 0 && cfg.sort !== 'date' && !bag.noMonth) {
+        bag.noMonth = true;              // 按月的这一轮全空 → 下一轮不切月，用整个时段兜底
+        bag.items = [];
+        writeJSON(ctx, K.bag, bag);
+        continue;
+      }
       bag.items = shuffleArr(dedupeVariants(acc, cfg.variantDedupe, cfg.artistDedupe)).slice(0, cfg.bagSize);
+      // 一袋装不满（素材太薄，比如只勾工口）→ 下次别切月了，用整个时段兜，池子大得多
+      bag.noMonth = bag.items.length < Math.min(12, cfg.bagSize);
       writeJSON(ctx, K.bag, bag);
       if (!bag.items.length) break;
     }
