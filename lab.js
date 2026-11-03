@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v7.2-lab';
+const SCRIPT_VER = 'v7.4-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -222,51 +222,59 @@ export default async function (ctx) {
   // ② 否则从袋里拿一张；袋空就补一袋
   while (!candidate && searches < 4) {
     if (!bag.items.length) {
-      try {
-        const yandeRandomWithDate = cfg.site === 'yande' && cfg.sort === 'random' && !!cfg.dateFilter;
-        const page = cfg.sort === 'random'
-          ? (yandeRandomWithDate ? 1 + Math.floor(Math.random() * 20) : 1 + Math.floor(Math.random() * 3))
-          : Math.max(1, pool.page || 1);
-        // 时段切块：从「月份袋」里抽一个自然月，只在这个月里取图
-        let c = cfg;
-        if (cfg.monthSlice && cfg.periodDays > 0 && cfg.sort !== 'date') {
-          if (!Array.isArray(bag.months) || !bag.months.length) bag.months = shuffleArr(monthKeys(cfg.periodDays));
-          const mk = bag.months.shift();
-          const rg = monthRange(mk);
-          c = Object.assign({}, cfg, { dateFilter: 'date:' + rg.from + '..' + rg.to, monthLock: true, monthLabel: mk });
-          bag.lastMonth = mk;
-        }
-        // 「自动」= 两个源轮着用（候选集翻倍）；指定源就固定用那个
-        const hostOrder = cfg.site === 'auto'
-          ? (bag.srcTurn ? ['yande', konachanHostFor(cfg)] : [konachanHostFor(cfg), 'yande'])
-          : null;
-        // 轮到 yande 且是随机排序时，改用 order:date（yande 的 random+date 只回 0~3 条）
-        if (hostOrder && hostOrder[0] === 'yande' && cfg.sort === 'random' && c.dateFilter) {
-          c = Object.assign({}, c, { forceOrderDate: true });
-        }
-        const res = await search(ctx, c, page, pool.plan, badSet, historySet, hostOrder);
-        if (cfg.sort !== 'random') pool.page = page >= 10 ? 1 : page + 1;
-        searches++;
-        if (res.ok) pool.plan = res.plan || null;      // 记住生效档位，下次一次请求
-        pool.sig = sig;
-        writeJSON(ctx, poolKey, pool);
-        if (cfg.site === 'auto') { bag.srcTurn = bag.srcTurn ? 0 : 1; }
+      // 一页里常有“批量上传大户”占掉大半（实测某画师一个月内几十张），
+      // 所以按画师去重后往往不够装一袋 → 再取一页合并，最多 3 页
+      let acc = [];
+      let pages = 0;
+      while (pages < 3 && acc.length < cfg.bagSize && searches < 6) {
+        try {
+          const yandeRandomWithDate = cfg.site === 'yande' && cfg.sort === 'random' && !!cfg.dateFilter;
+          const page = cfg.sort === 'random'
+            ? (yandeRandomWithDate ? 1 + Math.floor(Math.random() * 20) : 1 + Math.floor(Math.random() * 3))
+            : Math.max(1, pool.page || 1);
 
-        const got = (res.fresh && res.fresh.length) ? res.fresh : (res.items || []);
-        const unseen = got.filter(it => !historySet.has(String(it.uid)) && !badSet.has(String(it.uid)));
-        const picks = unseen.length ? unseen : got.filter(it => !badSet.has(String(it.uid))).slice(0, 5);
-        bag.items = shuffleArr(picks).slice(0, cfg.bagSize);
-        writeJSON(ctx, K.bag, bag);
-        if (!bag.items.length) {
-          // 这个月（或这个源）没货 → 换一个月再来，最多试 3 次，别一次刷爆请求
-          if (c.monthLock && searches < 3) continue;
+          // 时段切块：从「月份袋」里抽一个自然月，只在这个月里取图
+          let c = cfg;
+          if (cfg.monthSlice && cfg.periodDays > 0 && cfg.sort !== 'date') {
+            if (!Array.isArray(bag.months) || !bag.months.length) bag.months = shuffleArr(monthKeys(cfg.periodDays));
+            const mk = bag.months.shift();
+            const rg = monthRange(mk);
+            c = Object.assign({}, cfg, { dateFilter: 'date:' + rg.from + '..' + rg.to, monthLock: true, monthLabel: mk });
+            bag.lastMonth = mk;
+          }
+          // 「自动」= 两个源轮着用；指定源就固定用那个
+          const hostOrder = cfg.site === 'auto'
+            ? (bag.srcTurn ? ['yande', konachanHostFor(cfg)] : [konachanHostFor(cfg), 'yande'])
+            : null;
+          if (hostOrder && hostOrder[0] === 'yande' && cfg.sort === 'random' && c.dateFilter) {
+            c = Object.assign({}, c, { forceOrderDate: true });
+          }
+
+          const res = await search(ctx, c, page, pool.plan, badSet, historySet, hostOrder);
+          pages++;
+          searches++;
+          if (cfg.sort !== 'random') pool.page = page >= 10 ? 1 : page + 1;
+          if (res.ok) pool.plan = res.plan || null;
+          pool.sig = sig;
+          writeJSON(ctx, poolKey, pool);
+          if (cfg.site === 'auto') { bag.srcTurn = bag.srcTurn ? 0 : 1; }
+
+          const got = (res.fresh && res.fresh.length) ? res.fresh : (res.items || []);
+          const unseen = got.filter(it => !historySet.has(String(it.uid)) && !badSet.has(String(it.uid)));
+          const add = unseen.length ? unseen : got.filter(it => !badSet.has(String(it.uid))).slice(0, 3);
+          if (!add.length) break;
+          // 跨页也去重（同一张图两页都可能出现）
+          const have = new Set(acc.map(it => String(it.uid)));
+          add.forEach(it => { if (!have.has(String(it.uid))) { have.add(String(it.uid)); acc.push(it); } });
+        } catch (e) {
+          lastError = (e && e.message) || '搜索失败';
+          errorStatus = e && e.status ? e.status : null;
           break;
         }
-      } catch (e) {
-        lastError = (e && e.message) || '搜索失败';
-        errorStatus = e && e.status ? e.status : null;
-        break;
       }
+      bag.items = shuffleArr(cfg.dedupeVariant ? dedupeVariants(acc) : acc).slice(0, cfg.bagSize);
+      writeJSON(ctx, K.bag, bag);
+      if (!bag.items.length) break;
     }
     if (bag.items.length) {
       candidate = bag.items.shift();
@@ -492,7 +500,8 @@ function readConfig(env, family) {
     showInfo: bool('SHOW_INFO', false),   // 默认不显示，想看再手动打开
     repeatPct: int('REPEAT_PCT', 10, 0, 80),   // 允许多少比例的「回放」（重复率上限）
     bagSize: int('BAG_SIZE', 50, 10, 100),     // 每袋多少张（一次清单最多 100）
-    monthSlice: bool('MONTH_SLICE', true),     // 按月切块：每次装袋随机挑一个自然月
+    monthSlice: bool('MONTH_SLICE', true),     // 按月切块：每次装袋挑一个自然月
+    dedupeVariant: bool('DEDUPE_VARIANT', true),  // 同画师/变体去重：一袋里每个画师最多 1 张，跳过父子变体与同 pixiv 作品
     debug: bool('DEBUG', false),
     timeoutMs: 20000
   };
@@ -753,6 +762,12 @@ function normalize(list, host, meta) {
       rating: p.rating || '',
       score: Number(p.score) || 0,
       md5: p.md5 || '',
+      creator: p.creator_id || p.author || '',
+      parent: p.parent_id || 0,
+      srcKey: (() => {
+        const m = String(p.source || '').match(/pixiv\.net\/(?:[a-z]{2}\/)?artworks\/(\d+)/i);
+        return m ? 'p' + m[1] : '';
+      })(),
       // 跨站去重键：同一张画在两站 md5 相同，用它当历史/坏图的 key
       uid: (p.md5 ? 'm' + p.md5 : 'i' + host + '_' + p.id),
       tags: p.tags || '',
@@ -834,6 +849,29 @@ function monthRange(key) {
   const y = Number(parts[0]), m = Number(parts[1]);
   const last = new Date(y, m, 0).getDate();
   return { from: key + '-01', to: key + '-' + String(last).padStart(2, '0') };
+}
+
+// 同一个画师常一次上传一整套（草稿/差分/裁切），md5 不同但看起来一样。
+// 这里按「同 pixiv 作品 / 父子变体 / 同画师」三道筛，一袋里每个画师最多留 1 张。
+function dedupeVariants(list) {
+  const srcSeen = {};
+  const artistSeen = {};
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i];
+    if (it.parent) continue;                      // 子图（变体）直接跳过
+    if (it.srcKey) {
+      if (srcSeen[it.srcKey]) continue;           // 同一 pixiv 作品只留一张
+      srcSeen[it.srcKey] = 1;
+    }
+    const who = String(it.creator || '');
+    if (who) {
+      if (artistSeen[who]) continue;               // 一袋里每个画师最多 1 张
+      artistSeen[who] = 1;
+    }
+    out.push(it);
+  }
+  return out;
 }
 
 // Fisher-Yates 洗牌
