@@ -48,14 +48,14 @@ const SITE_DOMAIN = {
 };
 
 const K = {
-  cache: 'yd_cache_',        // + family
-  pool: 'yd_pool_',          // + ratioKey
-  history: 'yd_history',
-  lastShow: 'yd_lastshow_',  // + family
-  debug: 'yd_debug',
-  bad: 'yd_bad',             // 下不下来的图（id → 时间戳），7 天内不再试
-  bag: 'yd_bag',             // 洗牌袋：一页清单洗好后逐张发
-  shown: 'yd_shown'          // 最近展示过的图的元数据（回放用）
+  cache: 'lab_yd_cache_',    // 加 lab_ 前缀，和正式版共用设备时不串味
+  pool: 'lab_yd_pool_',          // + ratioKey
+  history: 'lab_yd_history',
+  lastShow: 'lab_yd_lastshow_',  // + family
+  debug: 'lab_yd_debug',
+  bad: 'lab_yd_bad',             // 下不下来的图（id → 时间戳），7 天内不再试
+  bag: 'lab_yd_bag',             // 洗牌袋：一页清单洗好后逐张发
+  shown: 'lab_yd_shown'          // 最近展示过的图的元数据（回放用）
 };
 
 // yande.re / Konachan 的标签全是英文（罗马字），中文直接查是 0 条。
