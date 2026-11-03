@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v7.1-lab';
+const SCRIPT_VER = 'v7.2-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -142,21 +142,12 @@ const RATING_ALLOWED = {
 // 排除用的敏感标签。yande.re 的 -tag 反选实测无效（只对 rating: 这类元标签生效），
 // 所以只能抓回来后在本地按标签精确匹配剔除
 const EXCLUDE_PRESETS = [
-  { key: 'EX_NIPPLE', tags: ['nipple', 'nipples'] },   // 单复数都排
-  { key: 'EX_PANTY', tags: ['panties'] },
-  { key: 'EX_UNDERWEAR', tags: ['underwear', 'bra'] },
-  { key: 'EX_SEETHROUGH', tags: ['see_through'] },
-  { key: 'EX_NUDE', tags: ['nude', 'topless', 'completely_nude'] },
-  { key: 'EX_LOLI', tags: ['loli', 'shota'] },
-  { key: 'EX_CAMEL', tags: ['cameltoe', 'spread_legs'] },
-  { key: 'EX_BONDAGE', tags: ['bondage'] },
+  { key: 'EX_NIPPLE', tags: ['nipple', 'nipples'] },          // 露点（单复数都排）
+  { key: 'EX_PANEL', tags: ['4koma'], on: true },             // 多格漫画（仅 yande.re 有效），默认开
   // 「白色」只按整词匹配：konachan 上 white_hair 有上万条，按段匹配会把白毛角色全灭
-  { key: 'EX_WHITE', tags: ['white'], exact: true, on: true },   // 默认开：白底/纯白画面在桌面组件上很难看
-  // 多格：只有 4koma 在 yande.re 有效（其余 comic/2koma/multiple_views/collage 两站都是 0）
-  { key: 'EX_PANEL', tags: ['4koma'] }
-  // 已删除（两站都搜不到，纯空转）：
-  //   EX_SKETCH sketch_page / reference_sheet / character_sheet
-  //   EX_PLAINBG white_background（Konachan 仅 1 条）/ transparent_background（0）
+  { key: 'EX_WHITE', tags: ['white'], exact: true, on: true } // 默认开：白底/纯白画面在桌面组件上很脏
+  // 其余排除项（胖次/内衣/透视/裸体/骆驼趾/萝莉/捆绑）已删除：
+  // 两站标签命中率低、又容易把 q 级素材筛空；需要时用「过滤 · 自定义标签」临时补
 ];
 
 const HARD_LIMIT_KB = 1200;   // 单张超过这个体积就跳过（iOS 桌面画不出来）
@@ -200,7 +191,7 @@ export default async function (ctx) {
 
   let history = readJSON(ctx, K.history);
   if (!Array.isArray(history)) history = [];
-  const historySet = new Set(history.map(String));
+  const historySet = new Set(history.map(String));   // 存的是 uid（md5）
 
   const badSet = new Set(Object.keys(readBad(ctx)));
 
@@ -219,7 +210,7 @@ export default async function (ctx) {
 
   // ① 按比例「回放」最久没出现的一张（默认 20%，均匀撒开，不会连着撞同一张）
   if (cfg.repeatPct > 0 && history.length && Math.random() * 100 < cfg.repeatPct) {
-    const holdId = cached && cached.id ? String(cached.id) : '';
+    const holdId = cached && (cached.uid || cached.id) ? String(cached.uid || cached.id) : '';
     for (let i = 0; i < history.length; i++) {
       if (history.length - i <= 8) break;          // 最近 8 次出现过的就别回放了，免得“刚看完又看到”
       const id = String(history[i]);
@@ -262,8 +253,8 @@ export default async function (ctx) {
         if (cfg.site === 'auto') { bag.srcTurn = bag.srcTurn ? 0 : 1; }
 
         const got = (res.fresh && res.fresh.length) ? res.fresh : (res.items || []);
-        const unseen = got.filter(it => !historySet.has(String(it.id)) && !badSet.has(String(it.id)));
-        const picks = unseen.length ? unseen : got.filter(it => !badSet.has(String(it.id))).slice(0, 5);
+        const unseen = got.filter(it => !historySet.has(String(it.uid)) && !badSet.has(String(it.uid)));
+        const picks = unseen.length ? unseen : got.filter(it => !badSet.has(String(it.uid))).slice(0, 5);
         bag.items = shuffleArr(picks).slice(0, cfg.bagSize);
         writeJSON(ctx, K.bag, bag);
         if (!bag.items.length) {
@@ -309,12 +300,12 @@ export default async function (ctx) {
         // 图床的 307/HTML 多数是暂时的（yande 会间歇性把 sample 跳回图片页）
         // 先原样重试一次，还不行再换一张；都不算坏图
         if (!retriedSame) { retriedSame = true; continue; }
-        badSet.add(String(candidate.id));
+        badSet.add(String(candidate.uid));
         retriedSame = false;
         if (++transientHits >= 3) break;
       } else {
-        badSet.add(String(candidate.id));
-        markBad(ctx, candidate.id);               // 这张真下不来，7 天内不再试
+        badSet.add(String(candidate.uid));
+        markBad(ctx, candidate.uid);               // 这张真下不来，7 天内不再试
       }
       candidate = null;
       {
@@ -334,6 +325,7 @@ export default async function (ctx) {
   const meta = candidate.meta || { sc: 0, pd: 0, rl: 0, tf: 0 };
   const entry = {
     id: candidate.id,
+    uid: candidate.uid,
     ar: candidate.sampleW && candidate.sampleH ? +(candidate.sampleW / candidate.sampleH).toFixed(2) : null,
     dim: candidate.sampleW && candidate.sampleH ? `${candidate.sampleW}×${candidate.sampleH}` : '',
     rating: candidate.rating,
@@ -359,14 +351,14 @@ export default async function (ctx) {
 
   const cacheOk = writeJSON(ctx, K.cache + family, entry);
   if (!cacheOk) entry.cacheFailed = true;
-  const hi = history.findIndex(x => String(x) === String(candidate.id));
+  const hi = history.findIndex(x => String(x) === String(candidate.uid));
   if (hi >= 0) history.splice(hi, 1);
-  history.push(candidate.id);
+  history.push(candidate.uid);
   while (history.length > cfg.maxHistory) history.shift();
   writeJSON(ctx, K.history, history);
   // 记住最近展示过的图（只留元数据，不含 base64），供「回放」用
-  shown[String(candidate.id)] = {
-    id: candidate.id, site: candidate.site, page: candidate.page, sample: candidate.sample,
+  shown[String(candidate.uid)] = {
+    id: candidate.id, uid: candidate.uid, site: candidate.site, page: candidate.page, sample: candidate.sample,
     sampleW: candidate.sampleW, sampleH: candidate.sampleH, sampleSize: candidate.sampleSize,
     rating: candidate.rating, score: candidate.score, tags: candidate.tags, meta: candidate.meta
   };
@@ -379,7 +371,6 @@ export default async function (ctx) {
     sizeKb: entry.sizeKb, rating: candidate.rating, tags: cfg.tagsJoined,
     meta, searches, cacheOk
   });
-  prunePools(ctx, cfg.ratioLabel);
 
   return buildWidget(entry, family, cfg, nextIso(cfg.cooldownMin > 0 ? cfg.cooldownMin : 15));
 }
@@ -421,8 +412,9 @@ function readConfig(env, family) {
   })();
   const allowed = rawAllowed.length ? rawAllowed : ['s'];   // 全关掉就按全年龄，别把自己筛空
 
-  const ownKey = RATIO_BY_FAMILY[family];
-  const ratioLabel = s(ownKey, '') || DEFAULT_RATIO[family] || '智能·标准';
+  // 画幅：一个变量管所有尺寸。「自动」= 小方 / 中横 / 大方 / 超大横
+  const ratioSel = s('RATIO_MODE', '自动');
+  const ratioLabel = ratioSel === '自动' ? (DEFAULT_RATIO[family] || '横图') : ratioSel;
   const ratioMode = ratioLabel === '不限' ? 'any' : 'band';
   const customOn = bool('RATIO_CUSTOM', true);      // 开箱即用：默认按理想比例 ±10% 收
   const tolPct = Math.min(50, Math.max(5, int('RATIO_TOL', 10, 5, 50)));   // 留空默认 10%，限制 5~50
@@ -496,7 +488,7 @@ function readConfig(env, family) {
     minW: int('MIN_W', 1024, 200, 4000),
     minScore: 0,        // v6.0 起不提供最低评分选项：实测高分档候选集太小，只会原地轮换
     cooldownMin: int('COOLDOWN', 30, 0, 24 * 60),
-    maxHistory: int('NO_REPEAT', 100, 1, 2000),
+    maxHistory: 200,   // 固定值，不再暴露成变量（洗牌袋模式下 200 足够）
     showInfo: bool('SHOW_INFO', false),   // 默认不显示，想看再手动打开
     repeatPct: int('REPEAT_PCT', 10, 0, 80),   // 允许多少比例的「回放」（重复率上限）
     bagSize: int('BAG_SIZE', 50, 10, 100),     // 每袋多少张（一次清单最多 100）
@@ -760,6 +752,9 @@ function normalize(list, host, meta) {
       height: Number(p.height) || 0,
       rating: p.rating || '',
       score: Number(p.score) || 0,
+      md5: p.md5 || '',
+      // 跨站去重键：同一张画在两站 md5 相同，用它当历史/坏图的 key
+      uid: (p.md5 ? 'm' + p.md5 : 'i' + host + '_' + p.id),
       tags: p.tags || '',
       meta: m            // 这批图是按哪个档位抓来的（sc=评分下限 / pd=时段天数 / rl=画幅退回粗分档 / tf=丢了标签）
     };
@@ -1073,16 +1068,4 @@ function markBad(ctx, id) {
   writeJSON(ctx, K.bad, o);
 }
 
-// 画幅改了以后，旧画幅的池子没人用，顺手清掉（只清我们确定存在的那几个 key）
-function prunePools(ctx, keepLabel) {
-  const keep = { 不限: 1 };
-  if (keepLabel) keep[keepLabel] = 1;
-  Object.keys(RATIO_BY_FAMILY).forEach(f => {
-    const v = ctx.env && ctx.env[RATIO_BY_FAMILY[f]];
-    keep[(v && String(v).trim()) || DEFAULT_RATIO[f] || ''] = 1;
-  });
-  ['方图', '横图', '竖图'].forEach(l => {
-    if (keep[l]) return;
-    try { if (ctx.storage.get(K.pool + l) !== undefined) ctx.storage.set(K.pool + l, ''); } catch (e) {}
-  });
-}
+
