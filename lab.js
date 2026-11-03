@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v7.10-lab';
+const SCRIPT_VER = 'v7.11-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -315,11 +315,13 @@ export default async function (ctx) {
         badSet.add(String(candidate.uid));
         markBad(ctx, candidate.uid);               // 这张真下不来，7 天内不再试
       }
+      // 换袋子里下一张（不会再去试这张坏图）
       candidate = null;
-      {
-        const alt = seenItems.filter(it => it && it.sample && !historySet.has(String(it.id)) && !badSet.has(String(it.id)));
-        if (alt.length) candidate = alt[Math.floor(Math.random() * alt.length)];
+      while (bag.items.length && !candidate) {
+        const next = bag.items.shift();
+        if (next && !badSet.has(String(next.uid)) && !historySet.has(String(next.uid))) candidate = next;
       }
+      writeJSON(ctx, K.bag, bag);
       writeJSON(ctx, poolKey, pool);
     }
   }
