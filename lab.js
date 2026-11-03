@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v7.5-lab';
+const SCRIPT_VER = 'v7.6-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -385,6 +385,16 @@ export default async function (ctx) {
 
 /* ============================ 配置 ============================ */
 
+// 洗牌参数不再暴露成变量：按「排序」自动套用一套预设
+//   随机 = 大袋子、按月切块、不回放
+//   热度 = 小袋子、按月切块、10% 回放（榜单走完一定会回头）
+//   最新 = 更小的袋子、不切月、不回放（袋子一大就不“最新”了）
+const SORT_PRESETS = {
+  random: { bagSize: 50, monthSlice: true,  variantDedupe: true, artistDedupe: false, repeatPct: 0 },
+  score:  { bagSize: 30, monthSlice: true,  variantDedupe: true, artistDedupe: false, repeatPct: 10 },
+  date:   { bagSize: 20, monthSlice: false, variantDedupe: true, artistDedupe: false, repeatPct: 0 }
+};
+
 function readConfig(env, family) {
   const s = (k, d) => {
     const v = env && env[k];
@@ -435,6 +445,7 @@ function readConfig(env, family) {
 
   const sortLabel = s('SORT', '随机');
   const sort = /热度|score/i.test(sortLabel) ? 'score' : (/最新|date/i.test(sortLabel) ? 'date' : 'random');
+  const preset = SORT_PRESETS[sort] || SORT_PRESETS.random;
 
   // 时段：yande.re 支持 date:>YYYY-MM-DD（也支持 date:A..B），不支持 age:
   // 「最新」本身就是时间倒序，时段没意义 → 忽略
@@ -498,11 +509,12 @@ function readConfig(env, family) {
     cooldownMin: int('COOLDOWN', 30, 0, 24 * 60),
     maxHistory: 200,   // 固定值，不再暴露成变量（洗牌袋模式下 200 足够）
     showInfo: bool('SHOW_INFO', false),   // 默认不显示，想看再手动打开
-    repeatPct: int('REPEAT_PCT', 10, 0, 80),   // 允许多少比例的「回放」（重复率上限）
-    bagSize: int('BAG_SIZE', 50, 10, 100),     // 每袋多少张（一次清单最多 100）
-    monthSlice: bool('MONTH_SLICE', true),     // 按月切块：每次装袋挑一个自然月
-    artistDedupe: bool('ARTIST_DEDUPE', true),    // 一袋里每个画师最多 1 张
-    variantDedupe: bool('VARIANT_DEDUPE', true),  // 跳过父子变体图 + 同一 pixiv 作品的多张
+    // 洗牌参数由「排序」决定（见 SORT_PRESETS），不再单独暴露成变量
+    repeatPct: preset.repeatPct,
+    bagSize: preset.bagSize,
+    monthSlice: preset.monthSlice,
+    artistDedupe: preset.artistDedupe,
+    variantDedupe: preset.variantDedupe,
     debug: bool('DEBUG', false),
     timeoutMs: 20000
   };
