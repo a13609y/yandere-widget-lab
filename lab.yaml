@@ -26,9 +26,15 @@ env_schema:
     options: ["true", "false"]
     default_value: "true"
 
-  DEDUPE_VARIANT:
-    name: 洗牌 · 同画师/变体去重
-    description: "开 = 一袋里每个画师最多 1 张，并跳过同一 pixiv 作品的多张与父子变体图（草稿/差分/裁切）。画师批量上传时观感会好很多"
+  ARTIST_DEDUPE:
+    name: 洗牌 · 画师去重
+    description: "开 = 一袋里同一个画师最多 1 张。专治“批量投稿大户”：实测某个月 20 条随机帖里 15 条是同一个画师。关掉的话一袋能装更多，但可能连着看到同一个人的一堆图"
+    options: ["true", "false"]
+    default_value: "true"
+
+  VARIANT_DEDUPE:
+    name: 洗牌 · 变体去重
+    description: "开 = 跳过同一张画的变体（父子图：草稿/完成版/不同裁切）以及同一 pixiv 作品的多张图。和「画师去重」互不影响，可以单独关掉对比"
     options: ["true", "false"]
     default_value: "true"
 
