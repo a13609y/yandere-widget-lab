@@ -1,5 +1,5 @@
 name: yande.re 动漫图 · 实验版
-description: 【测试版】洗牌袋 + 按月切块 + 两源轮换，目标是把重复率压到 10% 左右；功能与正式版一致，只是换图策略不同
+description: 【测试版】与正式版 v8.1 同源（当前为逐字同步的基线），另装一份互不影响；功能、参数、换图策略全部一致，改动从这里开始
 author: Cuttlefish
 icon: https://raw.githubusercontent.com/a13609y/yandere-widget-lab/main/icon.png
 homepage: https://github.com/a13609y/yandere-widget-lab
