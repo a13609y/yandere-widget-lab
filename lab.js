@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v8.2.1-lab';
+const SCRIPT_VER = 'v8.2.2-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -269,18 +269,28 @@ export default async function (ctx) {
           // 跨页也去重（同一张图两页都可能出现）
           const have = new Set(acc.map(it => String(it.uid)));
           add.forEach(it => { if (!have.has(String(it.uid))) { have.add(String(it.uid)); acc.push(it); } });
+          // yande 走的是「大页模式」（limit=300 且固定 page=1，整月一次拿完），
+          // 再翻一次只会拿到一模一样的一页 → 直接结束（自动模式下 Konachan 挂了回退到 yande 时尤其浪费）
+          if (res.host === 'yande' && isRandomLike(cfg)) break;
         } catch (e) {
           lastError = (e && e.message) || '搜索失败';
           errorStatus = e && e.status ? e.status : null;
           break;
         }
       }
+      // 这个月没货（比如这一月的图全看过了）→ 先换一个月试试，别马上关掉切月
+      // （以前直接置 noMonth=true，会永久放弃按月切块，时间分布就散了）
       if (!acc.length && cfg.monthSlice && cfg.periodDays > 0 && !bag.noMonth) {
-        bag.noMonth = true;              // 按月的这一轮全空 → 下一轮不切月，用整个时段兜底
+        bag.emptyMonths = (bag.emptyMonths || 0) + 1;
+        if (bag.emptyMonths >= 3) {
+          bag.noMonth = true;            // 连换三个月全空 → 改用整个时段兜底
+          bag.emptyMonths = 0;
+        }
         bag.items = [];
         writeJSON(ctx, K.bag, bag);
         continue;
       }
+      bag.emptyMonths = 0;
       const uniq = dedupeVariants(acc, cfg.variantDedupe, cfg.artistDedupe);
       bag.items = (cfg.weighted ? weightedShuffle(uniq, cfg.weightK) : shuffleArr(uniq)).slice(0, cfg.bagSize);
       // 一袋装不满（素材太薄，比如只勾工口）→ 下次别切月了，用整个时段兜，池子大得多
@@ -759,7 +769,7 @@ async function search(ctx, cfg, page, plan, skipSet, historySet, hostOrder) {
       const url = HOSTS[host] + '?tags=' + encodeURIComponent(buildTagString(cc, useTags)) + '&limit=' + limit + '&page=' + page;
       try {
         const items = normalize(await fetchJson(ctx, url, cc), host, sent)
-          .filter(it => passesFilter(it, c) && !(skipSet && skipSet.has(String(it.id))));   // 下不下来的图直接当不存在，好让放宽链继续往下走
+          .filter(it => passesFilter(it, c) && !(skipSet && skipSet.has(String(it.uid))));   // 下不来的图当不存在，好让放宽链继续往下走（注意键是 uid/md5，不是 post id）
         okHosts.push(host);
         if (!items.length) continue;
         const fresh = historySet ? items.filter(it => !historySet.has(String(it.uid))) : items;
