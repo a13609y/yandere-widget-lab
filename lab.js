@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v8.2.2-lab';
+const SCRIPT_VER = 'v8.2.3-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -472,7 +472,8 @@ function readConfig(env, family) {
   })();
 
   const sortLabel = s('SORT', '随机');
-  const sort = /权重|weight/i.test(sortLabel) ? 'weight' : (/热度|score/i.test(sortLabel) ? 'score' : 'random');
+  // 「最新」已去掉；老用户 env 里存着「最新」的话，落到「权重」（同样是“跳过刚发的、等分数涨完”的思路）
+  const sort = /权重|weight|最新|date/i.test(sortLabel) ? 'weight' : (/热度|score/i.test(sortLabel) ? 'score' : 'random');
   const preset = SORT_PRESETS[sort] || SORT_PRESETS.random;
 
   // 时段：yande.re 支持 date:>YYYY-MM-DD（也支持 date:A..B / date:<YYYY-MM-DD），不支持 age:
