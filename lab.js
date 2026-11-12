@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v8.2.3-lab';
+const SCRIPT_VER = 'v8.3-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -234,18 +234,18 @@ export default async function (ctx) {
         try {
           const yandeRandomWithDate = cfg.site === 'yande' && isRandomLike(cfg);
 
-          // 时段切块：从「月份袋」里抽一个自然月，只在这个月里取图
+          // 时段切块：从「块袋」里抽一块（3 个连续自然月），只在这一块里取图
           let c = cfg;
           if (cfg.monthSlice && cfg.periodDays > 0 && !bag.noMonth) {
-            if (!Array.isArray(bag.months) || !bag.months.length) bag.months = shuffleArr(monthKeys(cfg.periodDays));
-            let mk = null, rg = null;
-            while (bag.months.length && !rg) {        // 「权重」档：被成熟期吃掉的月份直接跳过
-              mk = bag.months.shift();
-              rg = clipMonthRange(cfg, monthRange(mk));
+            if (!Array.isArray(bag.blocks) || !bag.blocks.length) bag.blocks = shuffleArr(blockKeys(cfg.periodDays));
+            let blk = null, rg = null;
+            while (bag.blocks.length && !rg) {        // 「权重」档：被成熟期吃掉的块直接跳过
+              blk = bag.blocks.shift();
+              rg = clipRange(cfg, blk);
             }
             if (rg) {
-              c = Object.assign({}, cfg, { dateFilter: 'date:' + rg.from + '..' + rg.to, monthLock: true, monthLabel: mk });
-              bag.lastMonth = mk;
+              c = Object.assign({}, cfg, { dateFilter: 'date:' + rg.from + '..' + rg.to, monthLock: true, blockLabel: blk.label });
+              bag.lastBlock = blk.label;
             }
           }
           // 取页要在月切块之后算：月份区间只有 5~6 页，翻到第 20 页必然空响应
@@ -278,19 +278,19 @@ export default async function (ctx) {
           break;
         }
       }
-      // 这个月没货（比如这一月的图全看过了）→ 先换一个月试试，别马上关掉切月
+      // 这一块没货（比如块内的图全看过了）→ 先换一块试试，别马上关掉切块
       // （以前直接置 noMonth=true，会永久放弃按月切块，时间分布就散了）
       if (!acc.length && cfg.monthSlice && cfg.periodDays > 0 && !bag.noMonth) {
-        bag.emptyMonths = (bag.emptyMonths || 0) + 1;
-        if (bag.emptyMonths >= 3) {
-          bag.noMonth = true;            // 连换三个月全空 → 改用整个时段兜底
-          bag.emptyMonths = 0;
+        bag.emptyBlocks = (bag.emptyBlocks || 0) + 1;
+        if (bag.emptyBlocks >= 3) {
+          bag.noMonth = true;            // 连换三块全空 → 改用整个时段兜底
+          bag.emptyBlocks = 0;
         }
         bag.items = [];
         writeJSON(ctx, K.bag, bag);
         continue;
       }
-      bag.emptyMonths = 0;
+      bag.emptyBlocks = 0;
       const uniq = dedupeVariants(acc, cfg.variantDedupe, cfg.artistDedupe);
       bag.items = (cfg.weighted ? weightedShuffle(uniq, cfg.weightK) : shuffleArr(uniq)).slice(0, cfg.bagSize);
       // 一袋装不满（素材太薄，比如只勾工口）→ 下次别切月了，用整个时段兜，池子大得多
@@ -537,7 +537,7 @@ function readConfig(env, family) {
     minW: int('MIN_W', 1024, 200, 4000),
     minScore: 0,        // v6.0 起不提供最低评分选项：实测高分档候选集太小，只会原地轮换
     cooldownMin: int('COOLDOWN', 30, 0, 24 * 60),
-    maxHistory: 200,   // 固定值，不再暴露成变量（洗牌袋模式下 200 足够）
+    maxHistory: 400,   // 固定值：40~50 张/袋 × 8~10 袋，够覆盖一整轮切块
     showInfo: bool('SHOW_INFO', false),   // 默认不显示，想看再手动打开
     // 洗牌参数由「排序」决定（见 SORT_PRESETS），不再单独暴露成变量
     weighted: sort === 'weight',
@@ -624,7 +624,7 @@ function isRandomLike(cfg) {
 }
 
 // 按月切块时把月份区间上限压到成熟期之前；整月都被吃掉就返回 null（跳过这个月）
-function clipMonthRange(cfg, rg) {
+function clipRange(cfg, rg) {
   if (!cfg.matureAt) return rg;
   const hi = ymdDaysAgo(MATURE_DAYS);
   const to = rg.to < hi ? rg.to : hi;
@@ -932,6 +932,25 @@ function monthKeys(days) {
   return out;
 }
 
+// 切块 = 3 个连续自然月。原来一个月一块，单月可用只有 200~300 张，
+// 36 个月 × 40 张 ≈ 1440 张就在 30 天内轮完一遍，而池子其实有 3000+ 张 —— 等于只用了一半寿命。
+function blockKeys(days) {
+  const months = monthKeys(days);            // 倒序：最近的月份在最前
+  const lo = ymdDaysAgo(Math.max(1, days));  // 时段下限（别让块超出用户选的时段）
+  const hi = ymdDaysAgo(0);                  // 上限 = 今天（月份区间会算到月末，属于未来）
+  const out = [];
+  for (let i = 0; i < months.length; i += 3) {
+    const chunk = months.slice(i, i + 3);    // [最新, 次新, 最老]
+    const newest = chunk[0], oldest = chunk[chunk.length - 1];
+    const a = monthRange(oldest), b = monthRange(newest);
+    const from = i + 3 >= months.length && a.from < lo ? lo : a.from;   // 最老那一块按时段下限裁
+    const to = b.to > hi ? hi : b.to;
+    if (from > to) continue;
+    out.push({ from, to, label: oldest === newest ? oldest : oldest.slice(2) + '~' + newest.slice(2) });
+  }
+  return out;
+}
+
 function monthRange(key) {
   const parts = String(key).split('-');
   const y = Number(parts[0]), m = Number(parts[1]);
@@ -952,16 +971,16 @@ async function prefetchBag(ctx, cfg, sig) {
     const historySet = new Set((readJSON(ctx, K.history) || []).map(String));
     let c = cfg;
     if (cfg.monthSlice && cfg.periodDays > 0 && !bag.noMonth) {
-      const months = (Array.isArray(bag.months) && bag.months.length) ? bag.months : shuffleArr(monthKeys(cfg.periodDays));
-      while (months.length && !clipMonthRange(cfg, monthRange(months[0]))) months.shift();   // 跳过被成熟期吃掉的月份
-      const mk = months[0];
-      const rg = mk ? clipMonthRange(cfg, monthRange(mk)) : null;
+      const blocks = (Array.isArray(bag.blocks) && bag.blocks.length) ? bag.blocks : shuffleArr(blockKeys(cfg.periodDays));
+      while (blocks.length && !clipRange(cfg, blocks[0])) blocks.shift();   // 跳过被成熟期吃掉的块
+      const blk = blocks[0];
+      const rg = blk ? clipRange(cfg, blk) : null;
       if (rg) {
         c = Object.assign({}, cfg, { dateFilter: 'date:' + rg.from + '..' + rg.to, monthLock: true });
-        bag.months = months;
-        bag.lastMonth = mk;
+        bag.blocks = blocks;
+        bag.lastBlock = blk.label;
       } else {
-        bag.months = [];
+        bag.blocks = [];
       }
     }
     const page = isRandomLike(cfg)
