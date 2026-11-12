@@ -31,7 +31,7 @@
  * DEBUG       调试角标                                               默认 false
  * ================================================================ */
 
-const SCRIPT_VER = 'v8.2-lab';
+const SCRIPT_VER = 'v8.2.1-lab';
 
 // konachan 有两个域名：.net 是纯净镜像（只有 s），.com 才含 q/e。
 // 勾了擦边/工口就自动换 .com，只勾全年龄就用 .net。
@@ -228,12 +228,11 @@ export default async function (ctx) {
       // 所以按画师去重后往往不够装一袋 → 再取一页合并，最多 3 页
       let acc = [];
       let pages = 0;
-      while (pages < 3 && acc.length < cfg.bagSize && searches < 6) {
+      // yande 单源 + 随机/权重：一次就拿了整个月（300 条），再翻是同一页，白花 4 秒
+      const maxPages = (cfg.site === 'yande' && isRandomLike(cfg)) ? 1 : 3;
+      while (pages < maxPages && acc.length < cfg.bagSize && searches < 6) {
         try {
-          const yandeRandomWithDate = cfg.site === 'yande' && isRandomLike(cfg) && !!cfg.dateFilter;
-          const page = isRandomLike(cfg)
-            ? (yandeRandomWithDate ? 1 + Math.floor(Math.random() * 20) : 1 + Math.floor(Math.random() * 3))
-            : Math.max(1, pool.page || 1);
+          const yandeRandomWithDate = cfg.site === 'yande' && isRandomLike(cfg);
 
           // 时段切块：从「月份袋」里抽一个自然月，只在这个月里取图
           let c = cfg;
@@ -249,11 +248,16 @@ export default async function (ctx) {
               bag.lastMonth = mk;
             }
           }
+          // 取页要在月切块之后算：月份区间只有 5~6 页，翻到第 20 页必然空响应
+          const page = isRandomLike(cfg)
+            ? (yandeRandomWithDate ? 1 + Math.floor(Math.random() * pageCapFor(c)) : 1 + Math.floor(Math.random() * 3))
+            : Math.max(1, pool.page || 1);
+
           // 回到「Konachan 优先，空了才用 yande」；不再两源轮换（两站图基本重合，轮换没好处）
           const res = await search(ctx, c, page, pool.plan, badSet, historySet);
           pages++;
           searches++;
-          if (!isRandomLike(cfg)) pool.page = page >= 10 ? 1 : page + 1;
+          if (!isRandomLike(cfg)) pool.page = page >= pageCapFor(c) ? 1 : page + 1;
           if (res.ok) pool.plan = res.plan || null;
           pool.sig = sig;
           writeJSON(ctx, poolKey, pool);
@@ -598,6 +602,12 @@ function dateFilterFor(days, matureAt) {
 }
 
 // 「随机」和「权重」都是随机取样，取页/翻页策略一致，只是「权重」多一道加权洗牌
+// 单月切块时源站只有 5~6 页（实测 yande 单月 400~600 张、Konachan 700~800 张）；
+// 不切月时（整个时段）页数很多，随机翻到 20 页没问题
+function pageCapFor(cfg) {
+  return cfg.monthLock ? 5 : 20;
+}
+
 function isRandomLike(cfg) {
   return cfg.sort === 'random' || cfg.sort === 'weight';
 }
@@ -616,9 +626,10 @@ function buildTagString(cfg, useTags) {
   // 这时改用 order:date + 随机页：仍然是“随机挑一批”，但落在时段内且数量正常
   const orderName = cfg.sort === 'weight' ? 'random' : (cfg.sort || 'random');
   // yande.re 的 order:random 叠加「区间」或「date:>」会退化（0~3 条），只叠 date:< 上限时正常
-  const onlyUpperBound = /^date:<\d{4}-\d{2}-\d{2}$/.test(cfg.dateFilter || '');
-  const yandeRandomWithDate = (cfg.site === 'yande' || cfg.forceOrderDate) && isRandomLike(cfg) && !!cfg.dateFilter && !onlyUpperBound;
-  const parts = ['order:' + (yandeRandomWithDate ? 'date' : orderName)];   // 必须第一个，否则排序失效
+  // yande.re 的 order:random 是个半残：无日期只回 ~20 条、带 date:< 回 ~15 条、带区间 0 条，
+  // 所以只要是「随机/权重」档走 yande，就一律换成 order:date + 随机页（每页照样 100 条）
+  const yandeRandom = (cfg.site === 'yande' || cfg.forceOrderDate) && isRandomLike(cfg);
+  const parts = ['order:' + (yandeRandom ? 'date' : orderName)];   // 必须第一个，否则排序失效
   if (useTags && cfg.tags.length) parts.push(...cfg.tags);
   if (cfg.ratingTag) parts.push(cfg.ratingTag);
   // 评分也交给服务端：本地「先随机抽 100 张再筛掉低分」等于白抽一大半，
@@ -741,13 +752,17 @@ async function search(ctx, cfg, page, plan, skipSet, historySet, hostOrder) {
       const host = hostList[i];
       // 轮到 yande 且带时段时，它的 order:random 只回 0~3 条 → 换成 order:date
       const cc = (host === 'yande' && isRandomLike(c) && c.dateFilter) ? Object.assign({}, c, { forceOrderDate: true }) : c;
-      const url = HOSTS[host] + '?tags=' + encodeURIComponent(buildTagString(cc, useTags)) + '&limit=100&page=' + pg;
+      // yande 的随机/权重档：一次要 300 条（单月总量 400~600，基本一页拿完），避免翻 3 页白等
+      const bigPage = host === 'yande' && isRandomLike(c);
+      const limit = bigPage ? 300 : 100;
+      const page = bigPage ? 1 : pg;
+      const url = HOSTS[host] + '?tags=' + encodeURIComponent(buildTagString(cc, useTags)) + '&limit=' + limit + '&page=' + page;
       try {
         const items = normalize(await fetchJson(ctx, url, cc), host, sent)
           .filter(it => passesFilter(it, c) && !(skipSet && skipSet.has(String(it.id))));   // 下不下来的图直接当不存在，好让放宽链继续往下走
         okHosts.push(host);
         if (!items.length) continue;
-        const fresh = historySet ? items.filter(it => !historySet.has(String(it.id))) : items;
+        const fresh = historySet ? items.filter(it => !historySet.has(String(it.uid))) : items;
         if (fresh.length) return { items, fresh, host, meta: sent };
         stalePool.push.apply(stalePool, items);   // 全看过 → 记下来兜底，同时让链继续降档
       } catch (e) {
@@ -939,8 +954,8 @@ async function prefetchBag(ctx, cfg, sig) {
       }
     }
     const page = isRandomLike(cfg)
-      ? (c.dateFilter && cfg.site === 'yande' ? 1 + Math.floor(Math.random() * 20) : 1 + Math.floor(Math.random() * 3))
-      : Math.max(1, pool_page(bag));
+      ? (c.dateFilter && cfg.site === 'yande' ? 1 + Math.floor(Math.random() * pageCapFor(c)) : 1 + Math.floor(Math.random() * 3))
+      : Math.max(1, pool_page(bag, pageCapFor(c)));
 
     const res = await search(ctx, c, page, bag.plan, badSet, historySet, null);
     if (!res.ok || !res.items.length) return;
@@ -954,9 +969,10 @@ async function prefetchBag(ctx, cfg, sig) {
   } catch (e) { /* 预补货失败不影响本次渲染 */ }
 }
 
-function pool_page(bag) {
+function pool_page(bag, cap) {
   const n = Number((bag && bag.page) || 1) || 1;
-  return n >= 10 ? 1 : n + 1;
+  const c = cap || 10;
+  return n >= c ? 1 : n + 1;
 }
 
 // 同一个画师常一次上传一整套（草稿/差分/裁切），md5 不同但看起来一样。
