@@ -1160,8 +1160,11 @@ function buildWidget(entry, family, cfg, refreshAfter) {
     });
   }
 
+  // 主图走内容层 image：整张图作为子节点铺满，不再挂 widget 级背景图（那条渲染路径换图后不随时间线重算）
+  const cover = entry.dataUri ? { type: 'image', src: entry.dataUri, resizeMode: 'cover', flex: 1 } : null;
+
   if (lines.length) {
-    children.push({ type: 'spacer' });
+    if (cover) children.push(cover);
     children.push({
       type: 'stack',
       direction: 'row',
@@ -1182,11 +1185,13 @@ function buildWidget(entry, family, cfg, refreshAfter) {
     });
   }
 
+  if (!lines.length && cover) children.push(cover);
+
   const node = {
     type: 'widget',
     refreshAfter,
     padding: 0,
-    backgroundImage: entry.dataUri,
+    backgroundColor: '#000000',
     children
   };
   if (entry.page) node.url = entry.page;
