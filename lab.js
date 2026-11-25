@@ -205,6 +205,7 @@ export default async function (ctx) {
   const shown = readJSON(ctx, K.shown) || {};
 
   let candidate = null;
+  let staleItem = null;          // 袋里只剩旧图时留下的第一张（库尽兜底）
   let recycled = false;
   let searches = 0;
   let lastError = '';
@@ -299,10 +300,22 @@ export default async function (ctx) {
       if (!bag.items.length) break;
     }
     if (bag.items.length) {
-      candidate = bag.items.shift();
+      // 正常取图同样要跳过「看过的 / 判坏的」：以前这里只裸 shift，
+      // 于是补袋时兜底塞进来的旧图会被正常路径再发一次（只有下载失败换图那条路在查）
+      while (bag.items.length && !candidate) {
+        const next = bag.items.shift();
+        if (!next) continue;
+        const nextId = String(next.uid);
+        if (badSet.has(nextId)) continue;
+        if (historySet.has(nextId)) { staleItem = staleItem || next; continue; }   // 全旧时兜底用
+        candidate = next;
+      }
       writeJSON(ctx, K.bag, bag);
     }
   }
+
+  // 袋翻空了、补袋也没补出新的（库尽）→ 用袋里留下的那张旧图，别直接报错
+  if (!candidate && staleItem) candidate = staleItem;
 
   if (!candidate) {
     if (cached && cached.dataUri) {
